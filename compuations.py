@@ -10,11 +10,13 @@ from tqdm import tqdm
 from cymbal_msh import *
 init_session()
 
+# %%
 x, y, z, t = symbols('x y z t')
 k = symbols('k', positive=True)
 dt = Symbol("\\Delta t")
 dt
 
+# %%
 u = Function('u')(x, y, z, t)
 v = Function('v')(x, y, z)
 
@@ -159,12 +161,9 @@ def test_norm(mesh):
 
 import cProfile
 
-with cProfile.Profile() as pr:
 
-    mesh = create_mesh()
-    M, K = test_norm(mesh)
-    
-    pr.print_stats('cumulative')
+mesh = create_mesh()
+M, K = test_norm(mesh)
 
 M
 K
