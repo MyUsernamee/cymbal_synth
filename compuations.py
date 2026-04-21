@@ -3,9 +3,9 @@ from sympy import *
 from sympy.calculus import finite_diff
 import os
 import sys
-import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.tri import Triangulation
+import numpy as np
 from tqdm import tqdm
 from cymbal_msh import *
 init_session()
@@ -17,6 +17,7 @@ dt = Symbol("\\Delta t")
 dt
 
 # %%
+
 u = Function('u')(x, y, z, t)
 v = Function('v')(x, y, z)
 
@@ -24,6 +25,8 @@ dims = [x, y, z]
 
 eq = integrate(differentiate_finite(u.diff(t, 1), t, points=[t - 2 * dt, t, t - dt]) * v, *((i, -oo, oo) for i in dims)) - k * integrate(sum(u.diff(i) * v.diff(i) for i in dims), *((i, -oo, oo) for i in dims))
 eq
+
+# %%
 
 import scipy as sp
 
@@ -33,6 +36,7 @@ class Mesh:
         self.nodes = []
         self.ids = []
         self.faces = []
+        self.elm_counts = {}
 
     def addNode(self, x, y, z, id):
         assert id == len(self.nodes) + 1
@@ -57,6 +61,9 @@ class Mesh:
 
 
     def addFace(self, idxs, id):
+        # self.faces.append(np.array([i for i in idxs[0:3]]) - 1)
+        # for i in self.faces[-1]:
+        #     self.elm_counts[i] = self.elm_counts[i] + 1 if i in self.elm_counts else 1
         for i in range(0, len(idxs), 3):
             self.faces.append(np.array([i for i in idxs[i:i+3]]) - 1)
 
@@ -128,6 +135,9 @@ class Mesh:
                 K[i][j] = self._norm(grad_funcs[i], grad_funcs[j], nodes)
 
         return M, K
+
+# %%
+
 def create_mesh():
     mesh = Mesh()
     
@@ -161,22 +171,39 @@ def test_norm(mesh):
 
 import cProfile
 
-
+plt.ion()
 mesh = create_mesh()
+mesh.plot()
+plt.show()
+
+# %%
 M, K = test_norm(mesh)
 
 M
 K
 
-##
+# %%
+mesh.elm_counts
+# %%
+
+# Source - https://stackoverflow.com/a/3858333
+# Posted by unutbu, modified by community. See post 'Timeline' for change history
+# Retrieved 2026-04-19, License - CC BY-SA 4.0
+
+def minor(arr,i,j):
+    # ith row, jth column removed
+    return arr[np.array(list(range(i))+list(range(i+1,arr.shape[0])))[:,np.newaxis],
+               np.array(list(range(j))+list(range(j+1,arr.shape[1])))]
 
 sM = sp.sparse.csc_matrix(M)
 sK = sp.sparse.csc_matrix(K)
 
-plt.matshow(sp.sparse.linalg.inv(sM).todense())
+# plt.matshow(sp.sparse.linalg.inv(sM).todense())
 
+# %%
+
+n = mesh.num_nodes()
 def mat_simplification_calc():
-    n = mesh.num_nodes()
     u = Function('u')(t)
     Ms, Ks = symbols('M K')
 
@@ -189,15 +216,22 @@ def mat_simplification_calc():
     eq = eq.replace(Function('u')(Wild('w')), lambda w: MatrixSymbol(f'u({w})', n, 1))
     eq = eq.replace(Ms, Msm).replace(Ks, Ksm)
     eq = expand(eq)
+    print(eq)
 
     dt2 = Integer(1)/dt**Integer(2)
     eq2lhs = Ksm * usm + dt2 * Msm * usm
     eq2 = expand(Eq(eq2lhs, -eq + eq2lhs))
-    eq2
+    print(eq2)
     eq3 = Eq((Ksm + dt2 * Msm) * usm, eq2.rhs)
-    eq3
+    print(eq3)
     eq4 = (Ksm + dt2 * Msm).inv() * eq2.rhs
     print(expand(eq4))
+
+mat_simplification_calc()
+
+
+# %%
+plt.ioff()
 
 def simulate(
         youngs_modulus=(90+120)/2 * 1e9,
@@ -206,39 +240,59 @@ def simulate(
     global steps
 
     steps = []
+    frames = []
     
-    dt = 1e-4
-    c = youngs_modulus / density
+    sr = 44100
+    dt = 1/sr
+    c = (youngs_modulus / density)*1e6
     S = sp.sparse.linalg.inv(c * sK + 1/dt**2 * sM).dot(sM) / dt**2
     prev = np.zeros((n))
     p = np.copy(mesh.nodes) - np.array([300.0, 0.0, 0.0])
-    prev = 1 / (np.linalg.norm(p, axis=1) * 100 + 1)
+    prev = 1e7 / (np.linalg.norm(p, axis=1) * 1000 + 1)
     current = np.zeros_like(prev)
     
-    num_steps = 1e2
-    num_substeps = 1e2
+    num_steps = 1e1
+    num_substeps = sr / 10
     for _ in tqdm(range(int(num_steps))):
         for _ in range(int(num_substeps)):
             next = 2.0 * S.dot(current) - S.dot(prev)
             np.copyto(prev, current)
             np.copyto(current, next)
+            frames.append(np.copy(current))
         steps.append(np.copy(current))
     
-    return steps
+    return steps, frames
+
+# %%
 
 import matplotlib.animation as animation
 
-scale = 1e5
+scale = 1e2
 
 fig = plt.figure()
 
-steps = simulate()
-steps = [np.array([np.array((0.0, 0.0, j)) for j in i]) for i in steps]
-frames = [mesh.plot(fig=fig, offsets=step * scale) for step in steps]
+steps, frames = simulate()
 
-anim = animation.ArtistAnimation(fig, frames)
+# %%
+steps = [np.array([np.array((0.0, 0.0, j)) for j in i]) for i in steps]
+pltframes = [mesh.plot(fig=fig, offsets=step * scale) for step in steps]
+
+anim = animation.ArtistAnimation(fig, pltframes)
 anim.save('hit.mp4')
 
+# %%
 
+# Convert the frames to audio (sum all displacements, then normalize)
+sums = [sum(a) for a in frames]
+sums /= np.max(sums)
 
+# %%
+
+import scipy.io.wavfile as wf
+
+wf.write('output.wav', 44100, sums)
+
+# %%
+
+# %%
 
