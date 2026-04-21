@@ -238,7 +238,3 @@ frames = [mesh.plot(fig=fig, offsets=step * scale) for step in steps]
 
 anim = animation.ArtistAnimation(fig, frames)
 anim.save('hit.mp4')
-
-
-
-
